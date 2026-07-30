@@ -3,17 +3,11 @@
 use multicalc::numerical_integration::mode::*;
 
 use multicalc::error::IntegrateError;
+use multicalc::numerical_integration::gaussian_integration;
 use multicalc::numerical_integration::integrator::*;
 use multicalc::numerical_integration::iterative_integration;
 
 use proptest::prelude::*;
-
-#[cfg(any(
-    feature = "gauss-legendre",
-    feature = "gauss-hermite",
-    feature = "gauss-laguerre"
-))]
-use multicalc::numerical_integration::gaussian_integration;
 
 #[test]
 fn test_booles_integration_1() {
@@ -77,6 +71,75 @@ fn test_booles_integration_3() {
     //simple double integration for 6*x, expect a value of ~24.00
     let val = integrator.get_double(&func, &integration_limits).unwrap();
     assert!(f64::abs(val - 24.0) < 0.00001);
+}
+
+#[test]
+fn test_gauss_legendre_quadrature_integration_1() {
+    //equation is 4.0*x*x*x - 3.0*x*x
+    let func = |args: f64| -> f64 { 4.0 * args * args * args - 3.0 * args * args };
+
+    let integration_limit = [0.0, 2.0];
+
+    let integrator = gaussian_integration::GaussianSingle::from_parameters(
+        4,
+        GaussianQuadratureMethod::GaussLegendre,
+    );
+
+    //simple integration for x, known to be x^4 - x^3, expect a value of ~8.00
+    let val = integrator.get_single(&func, &integration_limit).unwrap();
+    assert!(f64::abs(val - 8.0) < 1e-14);
+}
+
+#[test]
+fn test_gauss_legendre_quadrature_integration_2() {
+    //equation is 2.0*x + y*z
+    let func = |args: &[f64; 3]| -> f64 { 2.0 * args[0] + args[1] * args[2] };
+
+    let integration_limit = [0.0, 1.0];
+    let point = [1.0, 2.0, 3.0];
+
+    let integrator = gaussian_integration::GaussianMulti::from_parameters(
+        2,
+        GaussianQuadratureMethod::GaussLegendre,
+    );
+
+    //partial integration for x, known to be x*x + x*y*z, expect a value of ~7.00
+    let val = integrator
+        .get_single_partial(&func, 0, &integration_limit, &point)
+        .unwrap();
+    assert!(f64::abs(val - 7.0) < 1e-14);
+
+    let integration_limit = [0.0, 2.0];
+
+    //partial integration for y, known to be 2.0*x*y + y*y*z/2.0, expect a value of ~10.00
+    let val = integrator
+        .get_single_partial(&func, 1, &integration_limit, &point)
+        .unwrap();
+    assert!(f64::abs(val - 10.0) < 1e-14);
+
+    let integration_limit = [0.0, 3.0];
+
+    //partial integration for z, known to be 2.0*x*z + y*z*z/2.0, expect a value of ~15.0
+    let val = integrator
+        .get_single_partial(&func, 2, &integration_limit, &point)
+        .unwrap();
+    assert!(f64::abs(val - 15.0) < 1e-14);
+}
+
+#[test]
+fn test_gauss_legendre_quadrature_integration_3() {
+    //equation is 6.0*x
+    let func = |args: f64| -> f64 { 6.0 * args };
+
+    let integration_limits = [[0.0, 2.0], [0.0, 2.0]];
+    let integrator = gaussian_integration::GaussianSingle::from_parameters(
+        2,
+        GaussianQuadratureMethod::GaussLegendre,
+    );
+
+    //simple double integration for 6*x, expect a value of ~24.00
+    let val = integrator.get_double(&func, &integration_limits).unwrap();
+    assert!(f64::abs(val - 24.0) < 1e-14);
 }
 
 #[test]
@@ -276,6 +339,117 @@ fn test_error_checking_2() {
 //TODO: add more tests
 
 #[test]
+fn test_error_checking_3() {
+    //equation is 4.0*x*x*x - 3.0*x*x
+    let func = |args: f64| -> f64 { 4.0 * args * args * args - 3.0 * args * args };
+
+    let integration_limit = [0.0, 2.0];
+
+    //Gauss Legendre not valid for n < 1
+    let integrator = gaussian_integration::GaussianSingle::from_parameters(
+        0,
+        GaussianQuadratureMethod::GaussLegendre,
+    );
+    let result = integrator.get_single(&func, &integration_limit);
+    assert!(result.is_err());
+    assert!(result.unwrap_err() == IntegrateError::QuadratureOrderOutOfRange);
+}
+
+#[test]
+fn test_error_checking_4() {
+    //equation is 4.0*x*x*x - 3.0*x*x
+    let func = |args: f64| -> f64 { 4.0 * args * args * args - 3.0 * args * args };
+
+    let integration_limit = [0.0, 2.0];
+
+    //Gauss Legendre not valid for n > 30
+    let integrator = gaussian_integration::GaussianSingle::from_parameters(
+        31,
+        GaussianQuadratureMethod::GaussLegendre,
+    );
+    let result = integrator.get_single(&func, &integration_limit);
+    assert!(result.is_err());
+    assert!(result.unwrap_err() == IntegrateError::QuadratureOrderOutOfRange);
+}
+
+#[test]
+fn test_gauss_hermite_single() {
+    //integrand is x*x; weights carry the e^{-x*x} kernel
+    //∫_{-∞}^∞ x² e^{-x²} dx = √π / 2
+    let func = |x: f64| -> f64 { x * x };
+
+    let integrator = gaussian_integration::GaussianSingle::from_parameters(
+        5,
+        GaussianQuadratureMethod::GaussHermite,
+    );
+
+    let integration_limit = [f64::NEG_INFINITY, f64::INFINITY];
+    let val = integrator.get_single(&func, &integration_limit).unwrap();
+
+    let expected = core::f64::consts::PI.sqrt() / 2.0;
+    assert!(f64::abs(val - expected) < 1e-10);
+}
+
+#[test]
+fn test_gauss_laguerre_single() {
+    //integrand is x*x; weights carry the e^{-x} kernel
+    //∫_0^∞ x² e^{-x} dx = 2
+    let func = |x: f64| -> f64 { x * x };
+
+    let integrator = gaussian_integration::GaussianSingle::from_parameters(
+        5,
+        GaussianQuadratureMethod::GaussLaguerre,
+    );
+
+    let integration_limit = [0.0, f64::INFINITY];
+    let val = integrator.get_single(&func, &integration_limit).unwrap();
+
+    assert!(f64::abs(val - 2.0) < 1e-9);
+}
+
+#[test]
+fn test_gauss_hermite_multivariable() {
+    //∫∫ x² y² e^{-x²} e^{-y²} dx dy = (√π/2)²
+    let func = |args: &[f64; 2]| -> f64 { args[0] * args[0] * args[1] * args[1] };
+
+    let integrator = gaussian_integration::GaussianMulti::from_parameters(
+        5,
+        GaussianQuadratureMethod::GaussHermite,
+    );
+
+    let integration_limits = [
+        [f64::NEG_INFINITY, f64::INFINITY],
+        [f64::NEG_INFINITY, f64::INFINITY],
+    ];
+    let point = [0.0, 0.0];
+    let val = integrator
+        .get([0, 1], &func, &integration_limits, &point)
+        .unwrap();
+
+    let sqrt_pi_half = core::f64::consts::PI.sqrt() / 2.0;
+    assert!(f64::abs(val - sqrt_pi_half * sqrt_pi_half) < 1e-10);
+}
+
+#[test]
+fn test_gauss_laguerre_multivariable() {
+    //∫∫ x² y² e^{-x} e^{-y} dx dy = 2 * 2 = 4
+    let func = |args: &[f64; 2]| -> f64 { args[0] * args[0] * args[1] * args[1] };
+
+    let integrator = gaussian_integration::GaussianMulti::from_parameters(
+        5,
+        GaussianQuadratureMethod::GaussLaguerre,
+    );
+
+    let integration_limits = [[0.0, f64::INFINITY], [0.0, f64::INFINITY]];
+    let point = [0.0, 0.0];
+    let val = integrator
+        .get([0, 1], &func, &integration_limits, &point)
+        .unwrap();
+
+    assert!(f64::abs(val - 4.0) < 1e-8);
+}
+
+#[test]
 fn test_iterative_infinite_gaussian() {
     //∫_{-∞}^∞ e^{-x²} dx = √π
     let func = |x: f64| -> f64 { f64::exp(-x * x) };
@@ -407,214 +581,18 @@ fn test_booles_integration_f32() {
     assert!(f32::abs(val - 4.0) < 1e-3, "got {val}");
 }
 
-#[cfg(feature = "gauss-legendre")]
-mod gauss_legendre {
-    use super::*;
+#[test]
+fn test_gauss_legendre_integration_f32() {
+    //4x^3 - 3x^2 integrated over [0, 2] is 8
+    let func = |x: f32| -> f32 { 4.0 * x * x * x - 3.0 * x * x };
 
-    #[test]
-    fn test_gauss_legendre_quadrature_integration_1() {
-        //equation is 4.0*x*x*x - 3.0*x*x
-        let func = |args: f64| -> f64 { 4.0 * args * args * args - 3.0 * args * args };
+    let integrator = gaussian_integration::GaussianSingle::<f32>::from_parameters(
+        4,
+        GaussianQuadratureMethod::GaussLegendre,
+    );
 
-        let integration_limit = [0.0, 2.0];
-
-        let integrator = gaussian_integration::GaussianSingle::from_parameters(
-            4,
-            GaussianQuadratureMethod::GaussLegendre,
-        );
-
-        //simple integration for x, known to be x^4 - x^3, expect a value of ~8.00
-        let val = integrator.get_single(&func, &integration_limit).unwrap();
-        assert!(f64::abs(val - 8.0) < 1e-14);
-    }
-
-    #[test]
-    fn test_gauss_legendre_quadrature_integration_2() {
-        //equation is 2.0*x + y*z
-        let func = |args: &[f64; 3]| -> f64 { 2.0 * args[0] + args[1] * args[2] };
-
-        let integration_limit = [0.0, 1.0];
-        let point = [1.0, 2.0, 3.0];
-
-        let integrator = gaussian_integration::GaussianMulti::from_parameters(
-            2,
-            GaussianQuadratureMethod::GaussLegendre,
-        );
-
-        //partial integration for x, known to be x*x + x*y*z, expect a value of ~7.00
-        let val = integrator
-            .get_single_partial(&func, 0, &integration_limit, &point)
-            .unwrap();
-        assert!(f64::abs(val - 7.0) < 1e-14);
-
-        let integration_limit = [0.0, 2.0];
-
-        //partial integration for y, known to be 2.0*x*y + y*y*z/2.0, expect a value of ~10.00
-        let val = integrator
-            .get_single_partial(&func, 1, &integration_limit, &point)
-            .unwrap();
-        assert!(f64::abs(val - 10.0) < 1e-14);
-
-        let integration_limit = [0.0, 3.0];
-
-        //partial integration for z, known to be 2.0*x*z + y*z*z/2.0, expect a value of ~15.0
-        let val = integrator
-            .get_single_partial(&func, 2, &integration_limit, &point)
-            .unwrap();
-        assert!(f64::abs(val - 15.0) < 1e-14);
-    }
-
-    #[test]
-    fn test_gauss_legendre_quadrature_integration_3() {
-        //equation is 6.0*x
-        let func = |args: f64| -> f64 { 6.0 * args };
-
-        let integration_limits = [[0.0, 2.0], [0.0, 2.0]];
-        let integrator = gaussian_integration::GaussianSingle::from_parameters(
-            2,
-            GaussianQuadratureMethod::GaussLegendre,
-        );
-
-        //simple double integration for 6*x, expect a value of ~24.00
-        let val = integrator.get_double(&func, &integration_limits).unwrap();
-        assert!(f64::abs(val - 24.0) < 1e-14);
-    }
-
-    #[test]
-    fn test_error_checking_3() {
-        //equation is 4.0*x*x*x - 3.0*x*x
-        let func = |args: f64| -> f64 { 4.0 * args * args * args - 3.0 * args * args };
-
-        let integration_limit = [0.0, 2.0];
-
-        //Gauss Legendre not valid for n < 1
-        let integrator = gaussian_integration::GaussianSingle::from_parameters(
-            0,
-            GaussianQuadratureMethod::GaussLegendre,
-        );
-        let result = integrator.get_single(&func, &integration_limit);
-        assert!(result.is_err());
-        assert!(result.unwrap_err() == IntegrateError::QuadratureOrderOutOfRange);
-    }
-
-    #[test]
-    fn test_error_checking_4() {
-        //equation is 4.0*x*x*x - 3.0*x*x
-        let func = |args: f64| -> f64 { 4.0 * args * args * args - 3.0 * args * args };
-
-        let integration_limit = [0.0, 2.0];
-
-        //Gauss Legendre not valid for n > 30
-        let integrator = gaussian_integration::GaussianSingle::from_parameters(
-            31,
-            GaussianQuadratureMethod::GaussLegendre,
-        );
-        let result = integrator.get_single(&func, &integration_limit);
-        assert!(result.is_err());
-        assert!(result.unwrap_err() == IntegrateError::QuadratureOrderOutOfRange);
-    }
-
-    #[test]
-    fn test_gauss_legendre_integration_f32() {
-        //4x^3 - 3x^2 integrated over [0, 2] is 8
-        let func = |x: f32| -> f32 { 4.0 * x * x * x - 3.0 * x * x };
-
-        let integrator = gaussian_integration::GaussianSingle::<f32>::from_parameters(
-            4,
-            GaussianQuadratureMethod::GaussLegendre,
-        );
-
-        let val = integrator.get_single(&func, &[0.0, 2.0]).unwrap();
-        assert!(f32::abs(val - 8.0) < 1e-2, "got {val}");
-    }
-}
-
-#[cfg(feature = "gauss-hermite")]
-mod gauss_hermite {
-    use super::*;
-
-    #[test]
-    fn test_gauss_hermite_single() {
-        //integrand is x*x; weights carry the e^{-x*x} kernel
-        //∫_{-∞}^∞ x² e^{-x²} dx = √π / 2
-        let func = |x: f64| -> f64 { x * x };
-
-        let integrator = gaussian_integration::GaussianSingle::from_parameters(
-            5,
-            GaussianQuadratureMethod::GaussHermite,
-        );
-
-        let integration_limit = [f64::NEG_INFINITY, f64::INFINITY];
-        let val = integrator.get_single(&func, &integration_limit).unwrap();
-
-        let expected = core::f64::consts::PI.sqrt() / 2.0;
-        assert!(f64::abs(val - expected) < 1e-10);
-    }
-
-    #[test]
-    fn test_gauss_hermite_multivariable() {
-        //∫∫ x² y² e^{-x²} e^{-y²} dx dy = (√π/2)²
-        let func = |args: &[f64; 2]| -> f64 { args[0] * args[0] * args[1] * args[1] };
-
-        let integrator = gaussian_integration::GaussianMulti::from_parameters(
-            5,
-            GaussianQuadratureMethod::GaussHermite,
-        );
-
-        let integration_limits = [
-            [f64::NEG_INFINITY, f64::INFINITY],
-            [f64::NEG_INFINITY, f64::INFINITY],
-        ];
-        let point = [0.0, 0.0];
-        let val = integrator
-            .get([0, 1], &func, &integration_limits, &point)
-            .unwrap();
-
-        let sqrt_pi_half = core::f64::consts::PI.sqrt() / 2.0;
-        assert!(f64::abs(val - sqrt_pi_half * sqrt_pi_half) < 1e-10);
-    }
-
-    
-}
-
-#[cfg(feature = "gauss-laguerre")]
-mod gauss_laguerre {
-    use super::*;
-
-    #[test]
-    fn test_gauss_laguerre_single() {
-        //integrand is x*x; weights carry the e^{-x} kernel
-        //∫_0^∞ x² e^{-x} dx = 2
-        let func = |x: f64| -> f64 { x * x };
-
-        let integrator = gaussian_integration::GaussianSingle::from_parameters(
-            5,
-            GaussianQuadratureMethod::GaussLaguerre,
-        );
-
-        let integration_limit = [0.0, f64::INFINITY];
-        let val = integrator.get_single(&func, &integration_limit).unwrap();
-
-        assert!(f64::abs(val - 2.0) < 1e-9);
-    }
-    #[test]
-    fn test_gauss_laguerre_multivariable() {
-        //∫∫ x² y² e^{-x} e^{-y} dx dy = 2 * 2 = 4
-        let func = |args: &[f64; 2]| -> f64 { args[0] * args[0] * args[1] * args[1] };
-
-        let integrator = gaussian_integration::GaussianMulti::from_parameters(
-            5,
-            GaussianQuadratureMethod::GaussLaguerre,
-        );
-
-        let integration_limits = [[0.0, f64::INFINITY], [0.0, f64::INFINITY]];
-        let point = [0.0, 0.0];
-        let val = integrator
-            .get([0, 1], &func, &integration_limits, &point)
-            .unwrap();
-
-        assert!(f64::abs(val - 4.0) < 1e-8);
-    }
+    let val = integrator.get_single(&func, &[0.0, 2.0]).unwrap();
+    assert!(f32::abs(val - 8.0) < 1e-2, "got {val}");
 }
 
 fn polynomial_coeffs(deg: usize) -> impl Strategy<Value = Vec<f64>> {
@@ -702,158 +680,114 @@ fn proptest_booles_integration_f64() {
     iterative_integration_proptest(5, iterator);
 }
 
-#[cfg(any(
-    feature = "gauss-legendre",
-    feature = "gauss-hermite",
-    feature = "gauss-laguerre"
-))]
-mod gauss_proptest {
-    use super::*;
+fn gauss_coeffs() -> impl Strategy<Value = (usize, Vec<f64>)> {
+    (1..10usize).prop_flat_map(|n| (Just(n), polynomial_coeffs(2 * n - 1)))
+}
 
-    fn gauss_coeffs() -> impl Strategy<Value = (usize, Vec<f64>)> {
-        (1..10usize).prop_flat_map(|n| (Just(n), polynomial_coeffs(2 * n - 1)))
+fn double_factorial(n: u64) -> f64 {
+    let mut result = 1.0;
+    let mut k = n;
+    while k > 1 {
+        result *= k as f64;
+        k -= 2;
     }
+    result
+}
 
-    
-    #[cfg(feature = "gauss-legendre")]
-    fn legendre_moment(k: usize, [a, b]: [f64; 2]) -> f64 {
-        (b.powi(k as i32 + 1) - a.powi(k as i32 + 1)) / (k as f64 + 1.0)
-    }
-    
-    #[cfg(feature = "gauss-hermite")]
-    fn double_factorial(n: u64) -> f64 {
-        let mut result = 1.0;
-        let mut k = n;
-        while k > 1 {
-            result *= k as f64;
-            k -= 2;
-        }
-        result
-    }
+fn legendre_moment(k: usize, [a, b]: [f64; 2]) -> f64 {
+    (b.powi(k as i32 + 1) - a.powi(k as i32 + 1)) / (k as f64 + 1.0)
+}
 
-    #[cfg(feature = "gauss-hermite")]
-    fn hermite_moment(deg: usize) -> f64 {
-        if deg % 2 == 1 {
-            0.0
+fn hermite_moment(deg: usize) -> f64 {
+    if deg % 2 == 1 {
+        0.0
+    } else {
+        let m = deg / 2;
+        let df = if m == 0 {
+            1.0
         } else {
-            let m = deg / 2;
-            let df = if m == 0 {
-                1.0
-            } else {
-                double_factorial(2 * m as u64 - 1)
-            };
-            df * std::f64::consts::PI.sqrt() / 2f64.powi(m as i32)
-        }
-    }
-
-    #[cfg(feature = "gauss-laguerre")]
-    fn laguerre_moment(k: usize) -> f64 {
-        (1..=k as u64).map(|i| i as f64).product::<f64>().max(1.0)
-    }
-
-    #[allow(unused_variables)]
-    fn gauss_closed_form(
-        quadrature: GaussianQuadratureMethod,
-        coeffs: &[f64],
-        limit: [f64; 2],
-    ) -> f64 {
-        coeffs
-            .iter()
-            .enumerate()
-            .map(|(deg, c)| {
-                c * match quadrature {
-                    #[cfg(feature = "gauss-legendre")]
-                    GaussianQuadratureMethod::GaussLegendre => legendre_moment(deg, limit),
-                    #[cfg(feature = "gauss-hermite")]
-                    GaussianQuadratureMethod::GaussHermite => hermite_moment(deg),
-                    #[cfg(feature = "gauss-laguerre")]
-                    GaussianQuadratureMethod::GaussLaguerre => laguerre_moment(deg),
-                }
-            })
-            .sum()
-    }
-
-    #[allow(unused_variables, unreachable_code)]
-    fn gauss_tolerance(
-        quadrature: GaussianQuadratureMethod,
-        coeffs: &[f64],
-        limit: [f64; 2],
-    ) -> f64 {
-        let moment_fn : fn(usize) -> f64 = match quadrature {
-            #[cfg(feature = "gauss-legendre")]
-            GaussianQuadratureMethod::GaussLegendre => return tolerance_from_coeffs(coeffs, limit),
-            #[cfg(feature = "gauss-hermite")]
-            GaussianQuadratureMethod::GaussHermite => hermite_moment,
-            #[cfg(feature = "gauss-laguerre")]
-            GaussianQuadratureMethod::GaussLaguerre => laguerre_moment,
+            double_factorial(2 * m as u64 - 1)
         };
-
-        let term_sum_abs: f64 = coeffs
-            .iter()
-            .enumerate()
-            .map(|(k, &c)| (c * moment_fn(k)).abs())
-            .sum();
-
-        (term_sum_abs).max(1.0) * 1e-9
+        df * std::f64::consts::PI.sqrt() / 2f64.powi(m as i32)
     }
+}
 
-    fn gauss_integration_proptest(
-        quadrature: GaussianQuadratureMethod,
-        limit_strat: impl Strategy<Value = [f64; 2]>,
-    ) {
-        proptest!(|(
-            limit in limit_strat,
-            (n, coeffs) in gauss_coeffs(),
-            )| {
+fn laguerre_moment(k: usize) -> f64 {
+    (1..=k as u64).map(|i| i as f64).product::<f64>().max(1.0)
+}
 
-            let func = func_from_coeffs(&coeffs);
-            let closed_form = gauss_closed_form(quadrature, &coeffs, limit);
-            let scaled_tol = gauss_tolerance(quadrature, &coeffs, limit);
+fn gauss_closed_form(quadrature: GaussianQuadratureMethod, coeffs: &[f64], limit: [f64; 2]) -> f64 {
+    coeffs
+        .iter()
+        .enumerate()
+        .map(|(deg, c)| {
+            c * match quadrature {
+                GaussianQuadratureMethod::GaussLegendre => legendre_moment(deg, limit),
+                GaussianQuadratureMethod::GaussHermite => hermite_moment(deg),
+                GaussianQuadratureMethod::GaussLaguerre => laguerre_moment(deg),
+            }
+        })
+        .sum()
+}
 
-            let integrator = gaussian_integration::GaussianSingle::<f64>::from_parameters(
-            n,
-            quadrature,
-            );
+fn gauss_tolerance(quadrature: GaussianQuadratureMethod, coeffs: &[f64], limit: [f64; 2]) -> f64 {
+    let moment_fn = match quadrature {
+        GaussianQuadratureMethod::GaussLegendre => return tolerance_from_coeffs(coeffs, limit),
+        GaussianQuadratureMethod::GaussHermite => hermite_moment,
+        GaussianQuadratureMethod::GaussLaguerre => laguerre_moment,
+    };
 
-            let val = integrator.get_single(&func, &limit).unwrap();
-            prop_assert!(f64::abs(val - closed_form) < scaled_tol);
-        });
-    }
+    let term_sum_abs: f64 = coeffs
+        .iter()
+        .enumerate()
+        .map(|(k, &c)| (c * moment_fn(k)).abs())
+        .sum();
 
-    #[test]
-    #[cfg(feature = "gauss-legendre")]
-    fn proptest_gauss_legendre_integration_f64() {
-        gauss_integration_proptest(GaussianQuadratureMethod::GaussLegendre, integration_limit());
-    }
+    (term_sum_abs).max(1.0) * 1e-9
+}
 
-    #[test]
-    #[cfg(feature = "gauss-hermite")]
-    fn proptest_gauss_hermite_integration_f64() {
-        gauss_integration_proptest(
-            GaussianQuadratureMethod::GaussHermite,
-            Just([-f64::INFINITY, f64::INFINITY]),
+fn gauss_integration_proptest(
+    quadrature: GaussianQuadratureMethod,
+    limit_strat: impl Strategy<Value = [f64; 2]>,
+) {
+    proptest!(|(
+        limit in limit_strat,
+        (n, coeffs) in gauss_coeffs(),
+        )| {
+
+        let func = func_from_coeffs(&coeffs);
+        let closed_form = gauss_closed_form(quadrature, &coeffs, limit);
+        let scaled_tol = gauss_tolerance(quadrature, &coeffs, limit);
+
+        let integrator = gaussian_integration::GaussianSingle::<f64>::from_parameters(
+        n,
+        quadrature,
         );
-    }
 
-    #[test]
-    #[cfg(feature = "gauss-laguerre")]
-    fn proptest_gauss_laguerre_integration_f64() {
-        gauss_integration_proptest(
-            GaussianQuadratureMethod::GaussLaguerre,
-            Just([0.0, f64::INFINITY]),
-        );
-    }
+        let val = integrator.get_single(&func, &limit).unwrap();
+        prop_assert!(f64::abs(val - closed_form) < scaled_tol);
+    });
+}
 
-    #[test]
-    fn gaussian_multi_rejects_out_of_range_index() {
-        let func = |args: &[f64; 2]| args[0] + args[1];
-        let point = [1.0, 2.0];
-        let integrator = gaussian_integration::GaussianMulti::default();
-        let err = integrator
-            .get([2; 1], &func, &[[0.0, 1.0]; 1], &point)
-            .unwrap_err();
-        assert_eq!(err, IntegrateError::IndexOutOfRange);
-    }
+#[test]
+fn proptest_gauss_legendre_integration_f64() {
+    gauss_integration_proptest(GaussianQuadratureMethod::GaussLegendre, integration_limit());
+}
+
+#[test]
+fn proptest_gauss_hermite_integration_f64() {
+    gauss_integration_proptest(
+        GaussianQuadratureMethod::GaussHermite,
+        Just([-f64::INFINITY, f64::INFINITY]),
+    );
+}
+
+#[test]
+fn proptest_gauss_laguerre_integration_f64() {
+    gauss_integration_proptest(
+        GaussianQuadratureMethod::GaussLaguerre,
+        Just([0.0, f64::INFINITY]),
+    );
 }
 
 #[test]
@@ -885,6 +819,17 @@ fn iterative_multi_rejects_out_of_range_index() {
     let func = |args: &[f64; 2]| args[0] + args[1];
     let point = [1.0, 2.0];
     let integrator = iterative_integration::IterativeMulti::default();
+    let err = integrator
+        .get([2; 1], &func, &[[0.0, 1.0]; 1], &point)
+        .unwrap_err();
+    assert_eq!(err, IntegrateError::IndexOutOfRange);
+}
+
+#[test]
+fn gaussian_multi_rejects_out_of_range_index() {
+    let func = |args: &[f64; 2]| args[0] + args[1];
+    let point = [1.0, 2.0];
+    let integrator = gaussian_integration::GaussianMulti::default();
     let err = integrator
         .get([2; 1], &func, &[[0.0, 1.0]; 1], &point)
         .unwrap_err();
