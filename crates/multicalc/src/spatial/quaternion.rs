@@ -538,15 +538,10 @@ impl<T: Numeric> Quaternion<T> {
     /// Rotates a point by the sandwich product `q · (0, v) · q⁻¹`. Assumes a unit quaternion.
     #[inline]
     pub fn transform_point(self, v: Vector3D<T>) -> Vector3D<T> {
-        let [x, y, z] = *v.as_array();
-        let p = Quaternion {
-            w: T::ZERO,
-            x,
-            y,
-            z,
-        };
-        let r = self * p * self.conjugate();
-        Vector::new([r.x, r.y, r.z])
+        let uxv = self.vec().cross(v).map(|c| c * T::TWO);
+        let uxuxv = self.vec().cross(uxv);
+
+        v + (uxv.map(|c| c * self.w) + uxuxv)
     }
 
     /// Rotates a point by the inverse rotation, the sandwich product `q^{-1} . (0, v) . q`.
