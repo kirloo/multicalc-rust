@@ -541,7 +541,7 @@ impl<T: Numeric> Quaternion<T> {
         let uxv = self.vec().cross(v).map(|c| c * T::TWO);
         let uxuxv = self.vec().cross(uxv);
 
-        v + (uxv.map(|c| c * self.w) + uxuxv)
+        v + uxuxv + uxv.map(|c| c * self.w)
     }
 
     /// Rotates a point by the inverse rotation, the sandwich product `q^{-1} . (0, v) . q`.
